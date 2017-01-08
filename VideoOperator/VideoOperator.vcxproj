@@ -70,6 +70,15 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="streamer.h" />
+    <ClInclude Include="tool.h" />
+    <ClInclude Include="vr_ini.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="streamer.cpp" />
+    <ClCompile Include="testmain.cpp" />
+    <ClCompile Include="tool.cpp" />
+    <ClCompile Include="vr_ini.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
