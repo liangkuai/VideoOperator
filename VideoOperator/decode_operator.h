@@ -1,6 +1,7 @@
 //#pragma once
 //#pragma execution_character_set("utf-8")
 
+
 #ifndef ffmpeg_include
 
 #define ffmpeg_include
@@ -20,6 +21,4 @@ extern "C"
 
 #endif
 
-int Streamer(const char **files, int file_num, const char *out_filename);
-
-int testStreamer(const char **files, int file_num, const char *out_filename);
+int input_operator(AVFormatContext *in_fmt_ctx, const char **files, int file_order, AVDictionary *options, int *videoindex);

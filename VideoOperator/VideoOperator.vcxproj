@@ -76,11 +76,15 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="decode_operator.h" />
+    <ClInclude Include="encode_operator.h" />
     <ClInclude Include="streamer.h" />
     <ClInclude Include="tool.h" />
     <ClInclude Include="vr_ini.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="decode_operator.cpp" />
+    <ClCompile Include="encode_operator.cpp" />
     <ClCompile Include="streamer.cpp" />
     <ClCompile Include="testmain.cpp" />
     <ClCompile Include="tool.cpp" />

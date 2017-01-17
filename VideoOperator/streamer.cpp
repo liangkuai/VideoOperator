@@ -1,20 +1,54 @@
 //#pragma once
 //#pragma execution_character_set("utf-8")
 
-#define __STDC_CONSTANT_MACROS
+#include "streamer.h"
+#include "decode_operator.h"
 
 #ifndef test
 	#define test
 #endif
 
-/**
-* C++ 中使用 C语言函数库
-* 需要添加 extern "C"
-*/
-extern "C"
+int testStreamer(const char **files, int file_num, const char *out_filename)
 {
-#include "libavformat\avformat.h"
-#include "libavutil\time.h"
+	AVFormatContext *in_fmt_ctx = NULL;
+	AVFormatContext *out_fmt_ctx = NULL;
+
+	int file_order = 0;
+	int ret;
+	int videoindex = -1;
+	int i;
+
+	// 初始化
+	// 1. 注册入口函数 -> 注册编解码器
+	// 2. 初始化网络
+	av_register_all();
+	avformat_network_init();
+	
+	// TODO: options
+	AVDictionary *options = NULL;
+	//av_dict_set(&options, "video_size", "320x240", 0);
+
+	ret = input_operator(in_fmt_ctx, files, file_order, options, &videoindex);
+
+	//av_log(NULL, AV_LOG_INFO, "video codec name : %s, video codec type: %d\n", in_fmt_ctx->video_codec->name, in_fmt_ctx->video_codec->type);
+	//av_log(NULL, AV_LOG_INFO, "audio codec name : %s, audio codec type: %d\n", in_fmt_ctx->audio_codec->name, in_fmt_ctx->audio_codec->type);
+	//av_log(NULL, AV_LOG_INFO, "data codec name : %s, data codec type: %d\n\n", in_fmt_ctx->data_codec->name, in_fmt_ctx->data_codec->type);
+
+end:
+	avformat_close_input(&in_fmt_ctx);
+
+	/* close output */
+	if (out_fmt_ctx && !(out_fmt_ctx->flags & AVFMT_NOFILE))
+		avio_close(out_fmt_ctx->pb);
+	avformat_free_context(out_fmt_ctx);
+
+	if (ret < 0 && ret != AVERROR_EOF)
+	{
+		av_log(NULL, AV_LOG_ERROR, "Error occurred.\n");
+		return -1;
+	}
+
+	return 0;
 }
 
 int Streamer(const char **files, int file_num, const char *out_filename)
@@ -51,17 +85,21 @@ int Streamer(const char **files, int file_num, const char *out_filename)
 	// Network
 	avformat_network_init();
 
+	AVDictionary *options = NULL;
+	av_dict_set(&options, "video_size", "1600x1200", 0);
+	//av_dict_set(&options, "pixel_format", "rgb24", 0);
+
 	// 打开输入流，初始化 Input_AVFormatContext
-	if ((ret = avformat_open_input(&in_fmt_ctx, *(files + file_order), NULL, NULL)) < 0)
+	if ((ret = avformat_open_input(&in_fmt_ctx, *(files + file_order), NULL, &options)) < 0)
 	{
 		printf("Could not open input file.");
 		goto end;
 	}
 
 	/**
-	* avformat_find_stream_info: 获取一部分视频数据和相关信息
-	* 执行正常: return >= 0
-	*/
+	 * avformat_find_stream_info: 获取一部分视频数据和相关信息
+	 * 执行正常: return >= 0
+	 */
 	if ((ret = avformat_find_stream_info(in_fmt_ctx, 0)) < 0)
 	{
 		printf("Failed to retrieve input stream information");
@@ -272,21 +310,21 @@ int Streamer(const char **files, int file_num, const char *out_filename)
 			printf("Send %8d video frames to output URL\n", frame_index);
 			frame_index++;
 
-			//ret = av_write_frame(out_fmt_ctx, &pkt);
-			ret = av_interleaved_write_frame(out_fmt_ctx, &pkt);
+			ret = av_write_frame(out_fmt_ctx, &pkt);
+			//ret = av_interleaved_write_frame(out_fmt_ctx, &pkt);
 		}
 
 		
-
-
-		if (ret < 0) {
-			printf("Push over 2");
-			printf("Error muxing packet\n");
-			break;
-		}
-
 		av_packet_unref(&pkt);
 		//av_free_packet(&pkt);
+
+		if (ret < 0) {
+			printf("Push over 2, ret: %d\n", ret);
+			printf("Error muxing packet\n");
+			//break;
+			continue;
+		}
+
 	}
 
 	//Write file trailer
@@ -298,12 +336,15 @@ int Streamer(const char **files, int file_num, const char *out_filename)
 
 end:
 	avformat_close_input(&in_fmt_ctx);
+
 	/* close output */
 	if (out_fmt_ctx && !(out_fmt_ctx->flags & AVFMT_NOFILE))
 		avio_close(out_fmt_ctx->pb);
 	avformat_free_context(out_fmt_ctx);
-	if (ret < 0 && ret != AVERROR_EOF) {
-		printf("Error occurred.\n");
+
+	if (ret < 0 && ret != AVERROR_EOF)
+	{
+		av_log(NULL, AV_LOG_ERROR, "Error occurred.\n");
 		return -1;
 	}
 

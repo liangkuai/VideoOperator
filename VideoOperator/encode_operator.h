@@ -19,7 +19,3 @@ extern "C"
 }
 
 #endif
-
-int Streamer(const char **files, int file_num, const char *out_filename);
-
-int testStreamer(const char **files, int file_num, const char *out_filename);

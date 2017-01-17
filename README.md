@@ -19,7 +19,7 @@
 
 - `argv[1]`: `ini` 配置文件名称
 
-### 配置文件说明
+### ini配置文件说明
 
 - ConfigInfo: 配置信息
     - `rtmp_url`: `rtmp` 视频流播放地址
