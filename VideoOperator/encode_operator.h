@@ -19,3 +19,5 @@ extern "C"
 }
 
 #endif
+
+int output_operator(AVFormatContext **in_fmt_ctx, AVFormatContext **out_fmt_ctx, const char *out_filename, int videoindex);

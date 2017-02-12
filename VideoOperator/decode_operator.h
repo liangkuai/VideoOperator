@@ -21,4 +21,4 @@ extern "C"
 
 #endif
 
-int input_operator(AVFormatContext *in_fmt_ctx, const char **files, int file_order, AVDictionary *options, int *videoindex);
+int input_operator(AVFormatContext **in_fmt_ctx, const char **files, int file_order, AVDictionary *options, int *videoindex);

@@ -3,6 +3,7 @@
 
 #include "streamer.h"
 #include "decode_operator.h"
+#include "encode_operator.h"
 
 #ifndef test
 	#define test
@@ -17,24 +18,201 @@ int testStreamer(const char **files, int file_num, const char *out_filename)
 	int ret;
 	int videoindex = -1;
 	int i;
+	int64_t start_time = 0;
+
+	AVOutputFormat *ofmt = NULL;
+	AVPacket pkt;
+	int64_t frame_index = 0;
 
 	// 初始化
 	// 1. 注册入口函数 -> 注册编解码器
 	// 2. 初始化网络
 	av_register_all();
-	avformat_network_init();
+	ret = avformat_network_init();
 	
 	// TODO: options
 	AVDictionary *options = NULL;
 	//av_dict_set(&options, "video_size", "320x240", 0);
 
-	ret = input_operator(in_fmt_ctx, files, file_order, options, &videoindex);
+	// 视频解码
+	ret = input_operator(&in_fmt_ctx, files, file_order, options, &videoindex);
+	if (ret < 0)
+	{
+		goto end;
+	}
 
-	//av_log(NULL, AV_LOG_INFO, "video codec name : %s, video codec type: %d\n", in_fmt_ctx->video_codec->name, in_fmt_ctx->video_codec->type);
-	//av_log(NULL, AV_LOG_INFO, "audio codec name : %s, audio codec type: %d\n", in_fmt_ctx->audio_codec->name, in_fmt_ctx->audio_codec->type);
-	//av_log(NULL, AV_LOG_INFO, "data codec name : %s, data codec type: %d\n\n", in_fmt_ctx->data_codec->name, in_fmt_ctx->data_codec->type);
+	// 视频编码
+	ret = output_operator(&in_fmt_ctx, &out_fmt_ctx, out_filename, videoindex);
+	if (ret < 0)
+	{
+		goto end;
+	}
+
+	ofmt = out_fmt_ctx->oformat;
+	// 打开输出
+	if (!(ofmt->flags & AVFMT_NOFILE)) {
+		ret = avio_open(&out_fmt_ctx->pb, out_filename, AVIO_FLAG_WRITE);
+		if (ret < 0) {
+			av_log(NULL, AV_LOG_ERROR, "Could not open output URL '%s'");
+			goto end;
+		}
+	}
+
+	// 写入视频文件头部
+	//ret = avformat_init_output(out_fmt_ctx, NULL);
+	ret = avformat_write_header(out_fmt_ctx, NULL);
+	if (ret < 0) {
+		av_log(NULL, AV_LOG_ERROR, "Error occurred when opening output URL\n");
+		goto end;
+	}
+
+	start_time = av_gettime();
+
+	while (1) {
+		AVStream *in_stream, *out_stream;
+
+		// 获取一帧
+		ret = av_read_frame(in_fmt_ctx, &pkt);
+		if (ret < 0)
+		{
+			// 取帧失败
+			// 1. 当前视频读取完
+			// 2. 取帧出错
+			// 
+			// 处理
+			// 1. 清除 AVPacket 内容
+			// 2. 函数执行状态标识 ret 置为 0
+			// 3. 读取视频文件标识循环往下一个移动
+			// 4. 释放当前 Input AVFormatContext (in_fmt_ctx) 内容
+			// 5. 重新初始化 Input AVFormatContext (in_fmt_ctx)
+			av_packet_unref(&pkt);
+			ret = 0;
+
+			if (file_order == file_num - 1)
+				file_order = 0;
+			else
+				++file_order;
+
+			avformat_close_input(&in_fmt_ctx);
+			in_fmt_ctx = NULL;
+
+			// 视频解码
+			ret = input_operator(&in_fmt_ctx, files, file_order, options, &videoindex);
+			if (ret < 0)
+			{
+				goto end;
+			}
+
+			av_log(NULL, AV_LOG_ERROR, "Push over, file order is: %d", file_order);
+			continue;
+		}
+
+		// TODO: No PTS (Example: Raw H.264)
+		// Simple Write PTS
+		// Write PTS
+		AVRational time_base1 = in_fmt_ctx->streams[videoindex]->time_base;
+		/* Duration between 2 frames (us) */
+		int64_t calc_duration = (double)AV_TIME_BASE / av_q2d(in_fmt_ctx->streams[videoindex]->r_frame_rate);
+		/* Parameters */
+		pkt.pts = (double)(frame_index*calc_duration) / (double)(av_q2d(time_base1)*AV_TIME_BASE);
+		pkt.dts = pkt.pts;
+		pkt.duration = (double)calc_duration / (double)(av_q2d(time_base1)*AV_TIME_BASE);
+
+		/* Important:Delay */
+		if (pkt.stream_index == videoindex){
+			AVRational time_base = in_fmt_ctx->streams[videoindex]->time_base;
+			AVRational time_base_q = { 1, AV_TIME_BASE };
+			int64_t pts_time = av_rescale_q(pkt.dts, time_base, time_base_q);
+			int64_t now_time = av_gettime() - start_time;
+			if (pts_time > now_time)
+				av_usleep(pts_time - now_time);
+
+			in_stream = in_fmt_ctx->streams[pkt.stream_index];
+			out_stream = out_fmt_ctx->streams[pkt.stream_index];
+
+			/* convert PTS/DTS and copy packet */
+			pkt.pts = av_rescale_q_rnd(pkt.pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
+			pkt.dts = av_rescale_q_rnd(pkt.dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
+			pkt.duration = av_rescale_q(pkt.duration, in_stream->time_base, out_stream->time_base);
+			pkt.pos = -1;
+
+			/* Print to screen */
+			av_log(NULL, AV_LOG_INFO, "Send %8d video frames to output URL\n", frame_index);
+			frame_index++;
+
+			// ret = av_write_frame(out_fmt_ctx, &pkt);
+			ret = av_interleaved_write_frame(out_fmt_ctx, &pkt);
+		}
+
+		// @deprecated
+		//	av_free_packet(&pkt);
+		av_packet_unref(&pkt);
+
+		if (ret < 0) {
+			av_log(NULL, AV_LOG_INFO, "Push over 2, ret: %d\n", ret);
+			av_log(NULL, AV_LOG_INFO, "Error muxing packet\n");
+
+			av_packet_unref(&pkt);
+			ret = av_write_trailer(out_fmt_ctx);
+
+			ret = 0;
+		
+			if (file_order == file_num - 1)
+				file_order = 0;
+			else
+				++file_order;
+
+			/* close input and output */
+			avformat_close_input(&in_fmt_ctx);
+			in_fmt_ctx = NULL;
+			if (out_fmt_ctx && !(out_fmt_ctx->flags & AVFMT_NOFILE))
+				avio_close(out_fmt_ctx->pb);
+			avformat_free_context(out_fmt_ctx);
+			out_fmt_ctx = NULL;
+
+			// 视频解码
+			ret = input_operator(&in_fmt_ctx, files, file_order, options, &videoindex);
+			if (ret < 0)
+			{
+				goto end;
+			}
+			
+			// 视频编码
+			ret = output_operator(&in_fmt_ctx, &out_fmt_ctx, out_filename, videoindex);
+			if (ret < 0)
+			{
+				goto end;
+			}
+
+			ofmt = out_fmt_ctx->oformat;
+			// 打开输出
+			if (!(ofmt->flags & AVFMT_NOFILE)) {
+				ret = avio_open(&out_fmt_ctx->pb, out_filename, AVIO_FLAG_WRITE);
+				if (ret < 0) {
+					av_log(NULL, AV_LOG_ERROR, "Could not open output URL '%s'");
+					goto end;
+				}
+			}
+
+			// 写入视频文件头部
+			//ret = avformat_init_output(out_fmt_ctx, NULL);
+			ret = avformat_write_header(out_fmt_ctx, NULL);
+			if (ret < 0) {
+				av_log(NULL, AV_LOG_ERROR, "Error occurred when opening output URL\n");
+				goto end;
+			}
+
+			start_time = av_gettime();
+
+			continue;
+		}
+
+	}
+
+	return 0;
 
 end:
+	avformat_network_deinit();
 	avformat_close_input(&in_fmt_ctx);
 
 	/* close output */
@@ -47,8 +225,6 @@ end:
 		av_log(NULL, AV_LOG_ERROR, "Error occurred.\n");
 		return -1;
 	}
-
-	return 0;
 }
 
 int Streamer(const char **files, int file_num, const char *out_filename)
@@ -150,12 +326,10 @@ int Streamer(const char **files, int file_num, const char *out_filename)
 	for (i = 0; i < in_fmt_ctx->nb_streams; i++) {
 		//Create output AVStream according to input AVStream
 		AVStream *in_stream = in_fmt_ctx->streams[i];
-		//AVStream *out_stream = avformat_new_stream(out_fmt_ctx, in_stream->codec->codec);
 		AVStream *out_stream = NULL;
-		if (i == 0)
+		//AVStream *out_stream = avformat_new_stream(out_fmt_ctx, in_stream->codec->codec);
+		if (i == videoindex)
 			out_stream = avformat_new_stream(out_fmt_ctx, in_fmt_ctx->video_codec);
-		else
-			out_stream = avformat_new_stream(out_fmt_ctx, in_fmt_ctx->audio_codec);
 		if (!out_stream) {
 			printf("Failed allocating output stream\n");
 			ret = AVERROR_UNKNOWN;
@@ -185,6 +359,7 @@ int Streamer(const char **files, int file_num, const char *out_filename)
 			out_fmt_ctx->flags |= CODEC_FLAG_GLOBAL_HEADER;
 #endif
 
+		// 视频无音频信息则不创建音频流
 		if (i == 0)
 			break;
 	}
